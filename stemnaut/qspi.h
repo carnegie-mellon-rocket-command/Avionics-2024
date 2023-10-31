@@ -40,6 +40,17 @@
 void qspi_init_flash(bool read_mode);
 
 /**
+ * @brief Gets the amount of data that was written onto the QSPI flash when
+ * it was last in write mode. 
+ * 
+ * NOTE: Calls to this function when the QSPI is in write mode will fail.
+ * 
+ * @return The number of bytes that were written when the STEMnaut was last in
+ * write mode. 
+ */
+uint32_t qspi_data_length();
+
+/**
  * @brief Reads a number of bytes from the current location in flash into a buffer. The current location in
  * flash in advanced by that many bytes.
  * 

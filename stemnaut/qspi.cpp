@@ -61,6 +61,11 @@ void qspi_init_flash(bool read_mode_in) {
     }
 }
 
+uint32_t qspi_data_length() {
+    if (!read_mode) return 0;
+    return flash_max_address - 0x04; // First 4 bytes are max address.
+}
+
 bool qspi_read(uint8_t *buffer, uint32_t len) {
     if (!read_mode) return false; // wrong mode. todo: log
     if (flash_address + len > flash_max_address) return false; // out of bounds. todo: log

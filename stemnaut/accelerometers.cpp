@@ -3,26 +3,6 @@
 #include <LSM6DS3.h>
 
 //=============================================================================
-//             FORWARD DECLARATIONS
-//=============================================================================
-
-static void sample_timer_callback();
-
-//=============================================================================
-//             TIMER SETUP
-//=============================================================================
-
-#define TIMER_INTERRUPT_DEBUG 0     // Library says don't define this as > 0.
-#define _TIMERINTERRUPT_LOGLEVEL_ 3 // Library says don't define this as > 0 for production. // TODO: change to 0 when done
-
-// This header CANNOT be included in more than one source file, per the library documentation. 
-// Attemping to do so will cause a multiple definition error. If timers are needed in multiple source files,
-// this code needs to be refactored.
-#include "NRF52TimerInterrupt.h"
-
-static NRF52Timer sample_timer(NRF_TIMER_1); // Hardware timer for logging data.
-
-//=============================================================================
 //             ACCELEROMETER SETUP
 //=============================================================================
 
@@ -37,6 +17,9 @@ static bool low_g_begin() {
     low_g_imu.settings.tempEnabled = 0;
     low_g_imu.settings.accelSampleRate = CMRC_LOW_G_REFRESH_RATE;
     low_g_imu.settings.gyroSampleRate = CMRC_LOW_G_REFRESH_RATE;
+
+    low_g_imu.settings.gyroRange = CMRC_LOW_G_GYRO_RANGE;
+    low_g_imu.settings.accelRange = CMRC_LOW_G_ACC_RANGE;
     
     return low_g_imu.begin() == IMU_SUCCESS; // TODO: log error
 }
@@ -48,12 +31,6 @@ bool cmrc_accelerometers_begin() {
 
     // TODO: high g accelerometer
 
-    // Set timer interrupt to handle logging data.
-    if (!sample_timer.attachInterruptInterval(1000000 / CMRC_SAMPLE_RATE, sample_timer_callback)) {
-        // creating timer failed. todo: log error
-        return false;
-    }
-
     return true;
 }
 
@@ -62,50 +39,35 @@ bool cmrc_accelerometers_begin() {
 //=============================================================================
 
 /**
- * Data is logged by a timer interrupt, which goes off CMRC_SAMPLE_RATE times per second. The interrupt handler
- * reads all data from the IMUs, and logs it to one of two buffers: sample_buffer_0 and sample_buffer_1. Which 
- * buffer is being used currently is determined by using_buffer_0. 
+ * @brief Gets the current timestamp and puts it into the sample buffer. Value is written in
+ * little-endian order.
  * 
- * When a buffer is full, the interrupt signals this by setting buffer_0_ready or buffer_1_ready true, based on
- * which buffer it just filled up. It also sets buffer_ready_len to the amount of data in that buffer (which
- * may be less than the size of the buffer). It then switches buffers, so that the next time the interrupt
- * fires, data is logged to the other buffer.
- * 
- * These two buffers are used to avoid race conditions on the data. When one buffer is full, it can be written
- * out to QSPI flash by the main program, and if interrupts fire during this time, they write to the other buffer
- * (which therefore doesn't affect the QSPI write). As long as the main program flushes the data between when a
- * buffer is filled up and when the next buffer is filled up (which should be about every second), data is 
- * correctly written out to flash.
- * 
- * Note that if both buffers are ready at the same time, this means that the interrupts have filled up both buffers.
- * Hence data is being lost, and the main program also does not know which buffer should be written to flash first. 
- * If the program gets to this state, this is an unrecoverable error.
+ * @param buffer Buffer to write into.
+ * @param start_index Index into that buffer to start writing at (will write 4 bytes). 
  */
+static inline void get_timestamp(uint8_t *buffer, uint32_t start_index) {
+    uint32_t time = millis();
 
-// X, Y, Z acceleration: 2 bytes each
-// X, Y, Z rotation: 2 bytes each
-#define CMRC_SAMPLE_SIZE 12  
-// Buffers are large enough to hold 1 second of data
-#define CMRC_SAMPLE_BUFFER_LEN (CMRC_SAMPLE_RATE * CMRC_SAMPLE_SIZE)
+    uint8_t byte0 = time & 0xFF;
+    uint8_t byte1 = (time >> 8) & 0xFF;
+    uint8_t byte2 = (time >> 16) & 0xFF;
+    uint8_t byte3 = (time >> 24) & 0xFF;
 
-static uint32_t sample_buffer_index = 0; // Index in the buffer currently being used for logging.
-static bool using_buffer_0 = true;       // Whether the interrupt is currently logging to buffer0 or buffer1.
-
-static bool buffer_0_ready = false;   // Whether buffer0 is ready to be written out to QSPI flash.
-static bool buffer_1_ready = false;   // Whether buffer1 is ready to be written out to QSPI flash.
-static uint32_t buffer_ready_len = 0; // How much data is ready to be written to flash, in whichever buffer is ready.
-
-static uint8_t sample_buffer_0[CMRC_SAMPLE_BUFFER_LEN]; // First buffer to log data in.
-static uint8_t sample_buffer_1[CMRC_SAMPLE_BUFFER_LEN]; // Second buffer to log data in.
+    buffer[start_index] = byte0;
+    buffer[start_index+1] = byte1;
+    buffer[start_index+2] = byte2;
+    buffer[start_index+3] = byte3;
+}
 
 /**
  * @brief Samples X, Y and Z acceleration from the low-g IMU (LSM6DS3) into the buffer. Values are
  * written in little-endian order, and in X, Y, Z order. Values are stored as raw bits, as this is
  * more space-efficient. They must be appropriately processed when read back.
  * 
- * @param buffer Which buffer to sample into.
+ * @param buffer Buffer to sample into.
+ * @param start_index Index into that buffer to start writing at (will write 6 bytes). 
  */
-static inline void sample_low_g_acc(uint8_t *buffer) {
+static inline void sample_low_g_acc(uint8_t *buffer, uint32_t start_index) {
     int16_t xAccelerationRaw = low_g_imu.readRawAccelX();
     int16_t yAccelerationRaw = low_g_imu.readRawAccelY();
     int16_t zAccelerationRaw = low_g_imu.readRawAccelZ();
@@ -117,14 +79,12 @@ static inline void sample_low_g_acc(uint8_t *buffer) {
     uint8_t zAccelerationLow = zAccelerationRaw & 0xFF;
     uint8_t zAccelerationHigh = (zAccelerationRaw >> 8) & 0xFF;
 
-    buffer[sample_buffer_index] = xAccelerationLow;
-    buffer[sample_buffer_index+1] = xAccelerationHigh;
-    buffer[sample_buffer_index+2] = yAccelerationLow;
-    buffer[sample_buffer_index+3] = yAccelerationHigh;
-    buffer[sample_buffer_index+4] = zAccelerationLow;
-    buffer[sample_buffer_index+5] = zAccelerationHigh;
-
-    sample_buffer_index += 6;
+    buffer[start_index] = xAccelerationLow;
+    buffer[start_index+1] = xAccelerationHigh;
+    buffer[start_index+2] = yAccelerationLow;
+    buffer[start_index+3] = yAccelerationHigh;
+    buffer[start_index+4] = zAccelerationLow;
+    buffer[start_index+5] = zAccelerationHigh;
 }
 
 /**
@@ -132,9 +92,10 @@ static inline void sample_low_g_acc(uint8_t *buffer) {
  * written in little-endian order, and in X, Y, Z order. Values are stored as raw bits, as this is
  * more space-efficient. They must be appropriately processed when read back.
  * 
- * @param buffer Which buffer to sample into.
+ * @param buffer Buffer to sample into.
+ * @param start_index Index into that buffer to start writing at (will write 6 bytes). 
  */
-static inline void sample_low_g_gyro(uint8_t *buffer) {
+static inline void sample_low_g_gyro(uint8_t *buffer, uint32_t start_index) {
     int16_t xGyroRaw = low_g_imu.readRawGyroX();
     int16_t yGyroRaw = low_g_imu.readRawGyroY();
     int16_t zGyroRaw = low_g_imu.readRawGyroZ();
@@ -146,47 +107,78 @@ static inline void sample_low_g_gyro(uint8_t *buffer) {
     uint8_t zGyroLow = zGyroRaw & 0xFF;
     uint8_t zGyroHigh = (zGyroRaw >> 8) & 0xFF;
 
-    buffer[sample_buffer_index] = xGyroLow;
-    buffer[sample_buffer_index+1] = xGyroHigh;
-    buffer[sample_buffer_index+2] = yGyroLow;
-    buffer[sample_buffer_index+3] = yGyroHigh;
-    buffer[sample_buffer_index+4] = zGyroLow;
-    buffer[sample_buffer_index+5] = zGyroHigh;
-
-    sample_buffer_index += 6;
+    buffer[start_index] = xGyroLow;
+    buffer[start_index+1] = xGyroHigh;
+    buffer[start_index+2] = yGyroLow;
+    buffer[start_index+3] = yGyroHigh;
+    buffer[start_index+4] = zGyroLow;
+    buffer[start_index+5] = zGyroHigh;
 }
 
-/**
- * Callback function for the hardware timer, to log data. 
- */
-static void sample_timer_callback() {
-    uint8_t *buffer = using_buffer_0 ? sample_buffer_0 : sample_buffer_1;
+bool cmrc_record_sample() {
+    uint8_t sample[CMRC_SAMPLE_SIZE];
 
-    // Sample data
-    sample_low_g_acc(buffer);
-    sample_low_g_gyro(buffer);
+    get_timestamp(sample, 0);
+    sample_low_g_acc(sample, 4);
+    sample_low_g_gyro(sample, 10);
 
-    if (sample_buffer_index + CMRC_SAMPLE_SIZE > CMRC_SAMPLE_BUFFER_LEN) {
-        // Current buffer is full: switch buffers and signal
-        buffer_ready_len = sample_buffer_index;
-
-        if (using_buffer_0) buffer_0_ready;
-        else buffer_1_ready;
-
-        using_buffer_0 = !using_buffer_0;
-        sample_buffer_index = 0;
-    }
+    return qspi_write(sample, CMRC_SAMPLE_SIZE); // todo: potentially log failure
 }
 
-bool cmrc_flush_data() {
-    if (buffer_0_ready) {
-        if (!qspi_write(sample_buffer_0, buffer_ready_len)) return false; // todo: log error
-        buffer_0_ready = false;
-        buffer_ready_len = 0;
-    } else if (buffer_1_ready) {
-        if (!qspi_write(sample_buffer_1, buffer_ready_len)) return false; // todo: log error
-        buffer_1_ready = false;
-        buffer_ready_len = 0;
+//=============================================================================
+//             READING DATA BACK OFF FLASH
+//=============================================================================
+
+// Taken from LSM6DS3.cpp.
+static float calculate_acceleration(int16_t input) {
+    float output = (float)input * 0.061 * (CMRC_LOW_G_ACC_RANGE >> 1) / 1000;
+    return output;
+}
+
+// Taken from LSM6DS3.cpp.
+static float calculate_gyro(int16_t input) {
+    uint8_t gyroRangeDivisor = CMRC_LOW_G_GYRO_RANGE / 125;
+    if (CMRC_LOW_G_GYRO_RANGE == 245) {
+        gyroRangeDivisor = 2;
     }
+
+    float output = (float)input * 4.375 * (gyroRangeDivisor) / 1000;
+    return output;
+}
+
+bool cmrc_read_qspi_sample(cmrc_sample_t *out) {
+    uint8_t sample[CMRC_SAMPLE_SIZE];
+
+    if (!qspi_read(sample, CMRC_SAMPLE_SIZE)) return false; // todo: log failure
+
+    uint32_t timestamp = ((uint32_t)sample[0])         |
+                         (((uint32_t)sample[1]) << 8)  |
+                         (((uint32_t)sample[2]) << 16) |
+                         (((uint32_t)sample[3]) << 24);
+
+    int16_t xAccelerationRaw = ((int16_t)sample[4]) | 
+                                (((int16_t)sample[5]) << 8);
+    int16_t yAccelerationRaw = ((int16_t)sample[6]) | 
+                                (((int16_t)sample[7]) << 8);
+    int16_t zAccelerationRaw = ((int16_t)sample[8]) | 
+                                (((int16_t)sample[9]) << 8);
+    
+    int16_t xGyroRaw = ((int16_t)sample[10]) | 
+                       (((int16_t)sample[11]) << 8);
+    int16_t yGyroRaw = ((int16_t)sample[12]) | 
+                       (((int16_t)sample[13]) << 8);
+    int16_t zGyroRaw = ((int16_t)sample[14]) | 
+                       (((int16_t)sample[15]) << 8);
+
+    out->timestamp = timestamp;
+
+    out->xAcceleration = calculate_acceleration(xAccelerationRaw);
+    out->yAcceleration = calculate_acceleration(yAccelerationRaw);
+    out->zAcceleration = calculate_acceleration(zAccelerationRaw);
+
+    out->xGyro = calculate_gyro(xGyroRaw);
+    out->yGyro = calculate_gyro(yGyroRaw);
+    out->zGyro = calculate_gyro(zGyroRaw);
+
     return true;
 }
