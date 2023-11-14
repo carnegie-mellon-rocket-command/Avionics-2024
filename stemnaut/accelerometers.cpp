@@ -1,12 +1,16 @@
 #include "accelerometers.h"
 #include "qspi.h"
 #include <LSM6DS3.h>
+#include <Wire.h>
+#include <Adafruit_H3LIS331.h>
+#include <Adafruit_Sensor.h>
 
 //=============================================================================
 //             ACCELEROMETER SETUP
 //=============================================================================
 
 static LSM6DS3 low_g_imu(I2C_MODE, 0x6A); // 0x6A = I2C address
+static Adafruit_H3LIS331 lis = Adafruit_H3LIS331(); //0x18 = I2C adress
 
 /**
  * @brief Initializes the low-g accelerometer (the inbuilt LSM6DS3 in the Seeed XIAO nRF52840 Sense).
@@ -24,8 +28,19 @@ static bool low_g_begin() {
     return low_g_imu.begin() == IMU_SUCCESS; // TODO: log error
 }
 
+
+static bool high_g_begin(){
+    if (!lis.begin_I2C()) {   // change this to 0x19 for alternative i2c address
+        Serial.println("Couldnt start");
+        while (1) yield();
+    }
+    lis.setRange(H3LIS331_RANGE_100_G);
+    lis.setDataRate(LIS331_DATARATE_100_HZ);
+    return true; //find a better way to test if working
+}
+
 bool cmrc_accelerometers_begin() {
-    if (!low_g_begin()) {
+    if (!low_g_begin() || !high_g_begin()) {
         return false; 
     } 
 
@@ -115,12 +130,36 @@ static inline void sample_low_g_gyro(uint8_t *buffer, uint32_t start_index) {
     buffer[start_index+5] = zGyroHigh;
 }
 
+static inline void sample_high_g_acc(uint8_t *buffer, uint32_t start_index) {
+    sensors_event_t event;
+    lis.getEvent(&event);
+    //I have no idea if this is correct because of casting (i just made stuff up);
+    int16_t xAccRaw = round(event.acceleration.x); //& 0xFFFF0000;
+    int16_t yAccRaw = round(event.acceleration.y); //& 0xFFFF0000;
+    int16_t zAccRaw = round(event.acceleration.z); //& 0xFFFF0000;
+
+    uint8_t xAccLow = xAccRaw & 0xFF;
+    uint8_t xAccHigh = (xAccRaw >> 8) & 0xFF;
+    uint8_t yAccLow = yAccRaw & 0xFF;
+    uint8_t yAccHigh = (yAccRaw >> 8) & 0xFF; 
+    uint8_t zAccLow = zAccRaw & 0xFF;
+    uint8_t zAccHigh = (zAccRaw >> 8) & 0xFF;
+
+    buffer[start_index] = xAccLow;
+    buffer[start_index+1] = xAccHigh;
+    buffer[start_index+2] = yAccLow;
+    buffer[start_index+3] = yAccHigh;
+    buffer[start_index+4] = zAccLow;
+    buffer[start_index+5] = zAccHigh;
+}
+
 bool cmrc_record_sample() {
     uint8_t sample[CMRC_SAMPLE_SIZE];
 
     get_timestamp(sample, 0);
     sample_low_g_acc(sample, 4);
     sample_low_g_gyro(sample, 10);
+    sample_high_g_acc(sample, 16);
 
     return qspi_write(sample, CMRC_SAMPLE_SIZE); // todo: potentially log failure
 }
@@ -169,6 +208,13 @@ bool cmrc_read_qspi_sample(cmrc_sample_t *out) {
                        (((int16_t)sample[13]) << 8);
     int16_t zGyroRaw = ((int16_t)sample[14]) | 
                        (((int16_t)sample[15]) << 8);
+          
+    int16_t xHighAccelerationRaw = ((int16_t)sample[16]) | 
+                       (((int16_t)sample[17]) << 8);
+    int16_t yHighAccelerationRaw = ((int16_t)sample[18]) | 
+                       (((int16_t)sample[19]) << 8);
+    int16_t zHighAccelerationRaw = ((int16_t)sample[20]) | 
+                       (((int16_t)sample[21]) << 8);
 
     out->timestamp = timestamp;
 
@@ -179,6 +225,10 @@ bool cmrc_read_qspi_sample(cmrc_sample_t *out) {
     out->xGyro = calculate_gyro(xGyroRaw);
     out->yGyro = calculate_gyro(yGyroRaw);
     out->zGyro = calculate_gyro(zGyroRaw);
+
+    out->xHighAccel = (int)xHighAccelerationRaw;
+    out->yHighAccel = (int)yHighAccelerationRaw;
+    out->zHighAccel = (int)zHighAccelerationRaw;
 
     return true;
 }

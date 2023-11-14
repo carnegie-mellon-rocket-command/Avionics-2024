@@ -19,7 +19,8 @@
 // Timestamp: 4 bytes
 // X, Y, Z acceleration: 2 bytes each
 // X, Y, Z rotation: 2 bytes each
-#define CMRC_SAMPLE_SIZE 16 
+// X, Y, X high-g-acceleration: 2 bytes each
+#define CMRC_SAMPLE_SIZE 22
 
 #define CMRC_LOW_G_ACC_RANGE 16    // Acceleration range for low-g accelerometer: +- this value
 #define CMRC_LOW_G_GYRO_RANGE 2000 // Gyro range for low-g accelerometer: +- this value
@@ -39,6 +40,10 @@ typedef struct {
     float xGyro;
     float yGyro;
     float zGyro;
+
+    float xHighAccel;
+    float yHighAccel;
+    float zHighAccel;
 } cmrc_sample_t;
 
 /**
