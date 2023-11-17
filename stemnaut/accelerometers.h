@@ -33,17 +33,17 @@
 typedef struct {
     uint32_t timestamp;
 
-    float xAcceleration;
-    float yAcceleration;
-    float zAcceleration;
+    float xAccelerationLowG;
+    float yAccelerationLowG;
+    float zAccelerationLowG;
 
-    float xGyro;
-    float yGyro;
-    float zGyro;
+    float xGyroLowG;
+    float yGyroLowG;
+    float zGyroLowG;
 
-    float xHighAccel;
-    float yHighAccel;
-    float zHighAccel;
+    int16_t xAccelerationHighG;
+    int16_t yAccelerationHighG;
+    int16_t zAccelerationHighG;
 } cmrc_sample_t;
 
 /**

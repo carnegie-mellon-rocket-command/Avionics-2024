@@ -47,7 +47,10 @@ void qspi_init_flash(bool read_mode_in) {
     if (read_mode) {
         // Read in maximum address from first 4 bytes of memory.
         uint8_t max_address_bytes[4];
-        if (!flash.readBuffer(0, max_address_bytes, 4)) {} // todo: log error
+        if (!flash.readBuffer(0, max_address_bytes, 4)) {
+            Serial.println("Error reading max address from QSPI flash in read mode startup (flash.readBuffer() returned 0).");
+            return;
+        }
 
         // Address is stored as little-endian
         flash_max_address = (((uint32_t)max_address_bytes[3]) << 24) |
@@ -57,7 +60,13 @@ void qspi_init_flash(bool read_mode_in) {
     } else {
         // Zero out maximum address
         uint8_t zero_address[4] = {0, 0, 0, 0};
-        if (!flash.writeBuffer(0, zero_address, 4)) {} // todo: log error
+        uint32_t num_written = flash.writeBuffer(0, zero_address, 4);
+        if (num_written != 4) {
+            char buf[256];
+            snprintf(buf, 256, "Error zeroing out max address in QSPI flash in write mode startup (flash.writeBuffer() returned %d, 4 expected).", num_written);
+            Serial.println(buf);
+            return;
+        }
     }
 }
 
@@ -67,11 +76,20 @@ uint32_t qspi_data_length() {
 }
 
 bool qspi_read(uint8_t *buffer, uint32_t len) {
-    if (!read_mode) return false; // wrong mode. todo: log
-    if (flash_address + len > flash_max_address) return false; // out of bounds. todo: log
+    if (!read_mode) {
+        Serial.println("Error: qspi_read called in write mode.");
+        return false;
+    } else if (flash_address + len > flash_max_address) {
+        char buf[256];
+        snprintf(buf, 256, "Error: qspi_read called with length greater than remaining data (current address: 0x%x, max address: 0x%x, length requested: 0x%x).", 
+            flash_address, flash_max_address, len);
+        Serial.print(buf);
+        return false;
+    }
 
     uint32_t num_read = flash.readBuffer(flash_address, buffer, len);
     if (num_read == 0) {
+        Serial.println("Error reading from QSPI flash (flash.readBuffer() returned 0).");
         return false;
     } else {
         // From reading the source code, read always returns either 0 or len. So we can assume num_read == len.
@@ -81,14 +99,24 @@ bool qspi_read(uint8_t *buffer, uint32_t len) {
 }
 
 bool qspi_write(uint8_t *buffer, uint32_t len) {
-    if (read_mode) return false; // wrong mode. todo: log
-    if (flash_address + len > QSPI_FLASH_SIZE) return false; // out of bounds. todo: log
+    if (read_mode) {
+        Serial.println("Error: qspi_write called in read mode.");
+        return false;
+    } else if (flash_address + len > QSPI_FLASH_SIZE) {
+        char buf[256];
+        snprintf(buf, 256, "Error: qspi_write called with length greater than remaining data (current address: 0x%x, flash size: 0x%x, length requested: 0x%x).", 
+            flash_address, QSPI_FLASH_SIZE, len);
+        Serial.print(buf);
+        return false;
+    }
     
     uint32_t num_written = flash.writeBuffer(flash_address, buffer, len);
     flash_address += num_written;
 
     if (num_written != len) {
-        // Number of bytes written was not what we requested. Likely an unrecoverable hardware failure. Todo: log.
+        char buf[256];
+        snprintf(buf, 256, "Error writing to QSPI flash (flash.writeBuffer() returned 0x%x, 0x%x expected).", num_written, len);
+        Serial.println(buf);
         return false;
     } else {
         // Update max address in first 4 bytes. Address is stored as little-endian.
@@ -98,10 +126,13 @@ bool qspi_write(uint8_t *buffer, uint32_t len) {
         address_bytes[2] = (flash_address >> 16) & 0xFF;
         address_bytes[3] = (flash_address >> 24) & 0xFF;
 
-        if (!flash.writeBuffer(0, address_bytes, 4)) {
-            // Error updating max address in first 4 bytes. Likely hardware failure.
+        uint32_t num_written_address = flash.writeBuffer(0, address_bytes, 4);
+        if (num_written_address != 4) {
+            char buf[256];
+            snprintf(buf, 256, "Error writing new max address (flash.writeBuffer() returned %d, 4 expected).", num_written_address);
+            Serial.println(buf);
             return false;
-        } 
+        }
 
         return true;
     }

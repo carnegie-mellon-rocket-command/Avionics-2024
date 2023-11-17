@@ -32,11 +32,21 @@ static void enter_read_mode() {
 
     while (num_samples_remaining > 0) {
         cmrc_sample_t sample;
-        if (!cmrc_read_qspi_sample(&sample)) { Serial.println("uh oh"); exit(0); } // todo: handle failure
+        if (!cmrc_read_qspi_sample(&sample)) { 
+            Serial.println("Error reading sample (cmrc_read_qspi_sample returned false.)");
+            delay(100);
+            exit(0);
+        } 
 
         char output[256];
-        snprintf(output, 256, "%lu, %f, %f, %f, %f, %f, %f, %f, %f, %f\n", sample.timestamp, sample.xAcceleration, sample.yAcceleration, sample.zAcceleration,
-                                                               sample.xGyro, sample.yGyro, sample.zGyro, sample.xHighAccel, sample.yHighAccel, sample.zHighAccel);
+        snprintf(output, 256, "%lu, "
+                "%f, %f, %f, "
+                "%f, %f, %f, "
+                "%d, %d, %d\n", 
+            sample.timestamp, 
+            sample.xAccelerationLowG, sample.yAccelerationLowG, sample.zAccelerationLowG,
+            sample.xGyroLowG, sample.yGyroLowG, sample.zGyroLowG, 
+            sample.xAccelerationHighG, sample.yAccelerationHighG, sample.zAccelerationHighG);
         Serial.write(output);
         num_samples_remaining -= 1;
     }
