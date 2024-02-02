@@ -1,13 +1,13 @@
 /*
-  SD card datalogger
- 
+ SD card datalogger
+
  This example shows how to log data from two digital sensors and one analog sensor
  to an SD card using the SD library.
 
-In this example you can fiddle with a potentiometer, 
-press a button to save the value of the pot to the teensy 4.1 microSD 
-and press a different button to display what value was saved.
-   
+ In this example you can fiddle with a potentiometer,
+ press a button to save the value of the pot to the teensy 4.1 microSD
+ and press a different button to display what value was saved.
+
  The circuit:
  * analog sensors on analog ins 0, 1, and 2
  * SD card attached to SPI bus as follows:
@@ -15,14 +15,14 @@ and press a different button to display what value was saved.
  ** MISO - pin 12
  ** CLK - pin 13, pin 14 on Teensy with audio board
  ** CS - pin 4,  pin 10 on Teensy with audio board
- 
- created  24 Nov 2010
+
+ created 24 Nov 2010
  modified 9 Apr 2012
  by Tom Igoe
-then modified again (horrible) by Andrew C. 
+ then modified again (horrible) by Andrew C.
 
- This example code is in the public domain.
-   
+ modified 1 Feb 2024 by Jeffery John for ATS Kalman Filter
+
  */
 
 #include <SD.h>
@@ -34,8 +34,7 @@ then modified again (horrible) by Andrew C.
 #include <Adafruit_BNO055.h>
 #include <utility/imumaths.h>
 
-
-//Create an instance of the object
+// Create an instance of the object
 MPL3115A2 myPressure;
 
 uint16_t BNO055_SAMPLERATE_DELAY_MS = 100;
@@ -43,7 +42,6 @@ uint16_t BNO055_SAMPLERATE_DELAY_MS = 100;
 // Check I2C device address and correct line below (by default address is 0x29 or 0x28)
 //                                   id, address
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
-
 
 // On the Ethernet Shield, CS is pin 4. Note that even if it's not
 // used as the CS pin, the hardware CS pin (10 on most Arduino boards,
@@ -61,9 +59,8 @@ Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
 // Teensy++ 2.0: pin 20
 //===============================================================================================================================
 
-
-const int chipSelect = BUILTIN_SDCARD; 
-sensors_event_t angVelocityData , linearAccelData, magnetometerData, accelerometerData, gravityData;
+const int chipSelect = BUILTIN_SDCARD;
+sensors_event_t angVelocityData, linearAccelData, magnetometerData, accelerometerData, gravityData;
 
 long start_time, temp_time, curr_time, timer;
 long loop_target = 10;
@@ -89,8 +86,6 @@ float accel;
 double x, y, z;
 float acc_vert = 0;
 
-
-
 float vel_k = .9;
 float vel_filtered = 0;
 float vel;
@@ -115,42 +110,68 @@ int ATS_min = 75;
 int ATS_max = 15;
 float ATS_pos = 0;
 //================================================================================================================================
-//this part sets things up!
+// this part sets things up!
+
+/*
+ * Kalman filtering attempt - Jeffery
+ */
+// parameters
+float processNoise = 0.001;  // Process noise covariance 
+float measurementNoise = 0.1;  // Measurement noise covariance 
+
+// state variables
+float altitudeEstimate = 0.0;  // Current altitude estimate
+float altitudeErrorEstimate = 1.0;  // Error estimate for altitude
+
+// Kalman filter update step
+void updateKalmanFilter(float measurement) {
+    altitudeEstimate += 0; // assume constant acceleration
+    altitudeErrorEstimate += processNoise;
+
+    // Update step
+    float kalmanGain = altitudeErrorEstimate / (altitudeErrorEstimate + measurementNoise);
+    altitudeEstimate += kalmanGain * (measurement - altitudeEstimate);
+    altitudeErrorEstimate = (1 - kalmanGain) * altitudeErrorEstimate + processNoise;
+}
+float getAltitudeEstimate() {
+    return altitudeEstimate;
+}
 
 void setup()
 {
-  
- // Open serial communications and wait for port to open:
-   Serial.begin(115200);
-  
+
+  // Open serial communications and wait for port to open:
+  Serial.begin(115200);
+
   Serial.print("Initializing SD card...");
-  
+
   // see if the card is present and can be initialized:
-  if (!SD.begin(chipSelect)) {
+  if (!SD.begin(chipSelect))
+  {
     Serial.println("Card failed, or not present");
     setup();
   }
   Serial.println("card initialized.");
-  
+
   Wire.begin();
   myPressure.begin(); // Get sensor online
 
-  //Configure the sensor
+  // Configure the sensor
   myPressure.setModeAltimeter(); // Measure altitude above sea level in meters
-  //myPressure.setModeBarometer(); // Measure pressure in Pascals from 20 to 110 kPa
+  // myPressure.setModeBarometer(); // Measure pressure in Pascals from 20 to 110 kPa
 
   myPressure.setOversampleRate(1); // Set Oversample to the recommended 128
-  myPressure.enableEventFlags(); // Enable all three pressure and temp event flags 
+  myPressure.enableEventFlags();   // Enable all three pressure and temp event flags
 
   altitude_0 = myPressure.readAltitudeFt();
-  
+
   if (!bno.begin())
   {
     Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
-    while (1);
+    while (1)
+      ;
   }
 
- 
   ATS.attach(ATS_pin);
   set_ATS(ATS_pos);
   delay(500);
@@ -163,105 +184,120 @@ void setup()
 
 void loop()
 {
-    buf = "";
-    for (int i = 0; i < buf_size; i++) {
-      //timeout1.timeOut(300, setup);
+  buf = "";
+  for (int i = 0; i < buf_size; i++)
+  {
+    // timeout1.timeOut(300, setup);
     // make a string for assembling the data to log:
-  
-  
-      run_timer();
 
-      read_altimeter();
-      read_IMU();
+    run_timer();
 
-      filter_altimeter();
-      filter_accel(&linearAccelData);
-      filter_velocity();
-      velocity_fusion();
-      make_prediction();
+    read_altimeter();
+    read_IMU();
 
-      //time, loop_time, alt, alt_filtered, vel, vel_filtered;
-      String s1 = String(timer) + ", " + String(loop_time) + ", " + String(altitude) + ", " + String(altimeter_filtered) + ", " + String(vel) + ", " + String(vel_filtered);
-      String s2 = String(prediction) + ", " + String(prediction_filtered) + ", " + String(accel) + ", " + String(accel_filtered);
-      String s3 = printEvent(&linearAccelData);
-      String s4 = printEvent(&accelerometerData);
-      String s5 = printEvent(&gravityData);
-      String s6 = printEvent(&angVelocityData);
-      String s7 = printEvent(&magnetometerData);
-      s = s1 + String(", ") + s2 + String(", ") + s3 + String(", ") + s4 + String(", ") + s5 + String(", ") + s6 + String(", ") + s7; 
-      Serial.println(fusion_vel);
+    filter_altimeter();
+    filter_accel(&linearAccelData);
+    filter_velocity();
+    velocity_fusion();
+    make_prediction();
 
-      
-      //Serial.println(s);
-      if (i != buf_size - 1) s = s + "\n";
-      
-      buf += s;
+    // time, loop_time, alt, alt_filtered, vel, vel_filtered;
+    String s1 = String(timer) + ", " + String(loop_time) + ", " + String(altitude) + ", " + String(altimeter_filtered) + ", " + String(vel) + ", " + String(vel_filtered);
+    String s2 = String(prediction) + ", " + String(prediction_filtered) + ", " + String(accel) + ", " + String(accel_filtered);
+    String s3 = printEvent(&linearAccelData);
+    String s4 = printEvent(&accelerometerData);
+    String s5 = printEvent(&gravityData);
+    String s6 = printEvent(&angVelocityData);
+    String s7 = printEvent(&magnetometerData);
+    s = s1 + String(", ") + s2 + String(", ") + s3 + String(", ") + s4 + String(", ") + s5 + String(", ") + s6 + String(", ") + s7;
+    Serial.println(fusion_vel);
 
-      if (accel_filtered > accel_thresh && launched == false){
-        launched = true;
-        ATS.attach(ATS_pin);
-      }
+    // Serial.println(s);
+    if (i != buf_size - 1)
+      s = s + "\n";
 
-      if (launched) {
-        set_ATS(1);
-      }
-    
-     
-   }
+    buf += s;
 
-   if (launched) {
-     digitalWrite(LED, LOW);
-     WriteData(buf);
-     //Serial.println(buf);
-     digitalWrite(LED, HIGH);
-     //set_ATS(1);
- 
-   } 
-   
- }
+    if (accel_filtered > accel_thresh && launched == false)
+    {
+      launched = true;
+      ATS.attach(ATS_pin);
+    }
 
+    if (launched)
+    {
+      set_ATS(1);
+    }
 
+    /*
+     * Kalman filtering approach
+     * main_sim_4 MATLAB version: obj.vert_vel(end+1) = (obj.alt_reading(end)-obj.alt_reading(end-1))/(obj.time_step)*(1-obj.vel_smoothing)+obj.vert_vel(end)*obj.vel_smoothing;
+    */
+    // Update Kalman filter with altitude measurement
+    updateKalmanFilter(accel_filtered);
 
-void run_timer() {
+    // Get filtered altitude
+    float kalmanFilteredAltitude = getAltitudeEstimate();
+    Serial.print("Altitude (Kalman Filter): " + String(kalmanFilteredAltitude));
+  }
+
+  if (launched)
+  {
+    digitalWrite(LED, LOW);
+    WriteData(buf);
+    // Serial.println(buf);
+    digitalWrite(LED, HIGH);
+    // set_ATS(1);
+  }
+}
+
+void run_timer()
+{
   temp_time = millis() - prev_loop;
-  if (temp_time < loop_target) {
+  if (temp_time < loop_target)
+  {
     delayMicroseconds((loop_target - temp_time) * 1000);
   }
   curr_time = millis();
   timer = curr_time - start_time;
   loop_time = (curr_time - prev_loop);
-  //if ((curr_time - prev_loop) > loop_time) loop_time = (curr_time - prev_loop); //log worst loop time if desired
+  // if ((curr_time - prev_loop) > loop_time) loop_time = (curr_time - prev_loop); //log worst loop time if desired
   prev_loop = curr_time;
 }
 
- void WriteData(String text) {
-    
-    // open the file named datalog.txt on the sd card
-    //Serial.println("open");
-    if (SD_active) {
-      File dataFile = SD.open("datalog.txt", FILE_WRITE);
-      //Serial.println("opened");
-      // if the file is available, write the contents of datastring to it
-      if (dataFile) {
-        dataFile.println(text);
-        dataFile.close();
-        Serial.println("writing");
-      }  
-      // if the file isn't open, pop up an error:
-      else {
-        SD_active = false;
-        Serial.println("error opening datalog.txt");
-        //SD.begin(chipSelect);
-      }  
-    } else {
-      Serial.println("SD Failed. Continuing without logging"); 
+void WriteData(String text)
+{
+
+  // open the file named datalog.txt on the sd card
+  // Serial.println("open");
+  if (SD_active)
+  {
+    File dataFile = SD.open("datalog.txt", FILE_WRITE);
+    // Serial.println("opened");
+    //  if the file is available, write the contents of datastring to it
+    if (dataFile)
+    {
+      dataFile.println(text);
+      dataFile.close();
+      Serial.println("writing");
     }
-     
- }
+    // if the file isn't open, pop up an error:
+    else
+    {
+      SD_active = false;
+      Serial.println("error opening datalog.txt");
+      // SD.begin(chipSelect);
+    }
+  }
+  else
+  {
+    Serial.println("SD Failed. Continuing without logging");
+  }
+}
 
-
-void read_IMU() {
-  //could add VECTOR_ACCELEROMETER, VECTOR_MAGNETOMETER,VECTOR_GRAVITY...
+void read_IMU()
+{
+  // could add VECTOR_ACCELEROMETER, VECTOR_MAGNETOMETER,VECTOR_GRAVITY...
   bno.getEvent(&angVelocityData, Adafruit_BNO055::VECTOR_GYROSCOPE);
   bno.getEvent(&linearAccelData, Adafruit_BNO055::VECTOR_LINEARACCEL);
   bno.getEvent(&magnetometerData, Adafruit_BNO055::VECTOR_MAGNETOMETER);
@@ -269,110 +305,127 @@ void read_IMU() {
   bno.getEvent(&gravityData, Adafruit_BNO055::VECTOR_GRAVITY);
 }
 
- String printEvent(sensors_event_t* event) {
+String printEvent(sensors_event_t *event)
+{
   String val;
-  double x = -1000000, y = -1000000 , z = -1000000; //dumb values, easy to spot problem
-  if (event->type == SENSOR_TYPE_ACCELEROMETER) {
-    //val = "Accl:";
+  double x = -1000000, y = -1000000, z = -1000000; // dumb values, easy to spot problem
+  if (event->type == SENSOR_TYPE_ACCELEROMETER)
+  {
+    // val = "Accl:";
     x = event->acceleration.x;
     y = event->acceleration.y;
     z = event->acceleration.z;
   }
-  else if (event->type == SENSOR_TYPE_ORIENTATION) {
-    //val = "Orient:";
+  else if (event->type == SENSOR_TYPE_ORIENTATION)
+  {
+    // val = "Orient:";
     x = event->orientation.x;
     y = event->orientation.y;
     z = event->orientation.z;
   }
-  else if (event->type == SENSOR_TYPE_MAGNETIC_FIELD) {
-    //val = "Mag:";
+  else if (event->type == SENSOR_TYPE_MAGNETIC_FIELD)
+  {
+    // val = "Mag:";
     x = event->magnetic.x;
     y = event->magnetic.y;
     z = event->magnetic.z;
   }
-  else if (event->type == SENSOR_TYPE_GYROSCOPE) {
-    //val = "Gyro:";
+  else if (event->type == SENSOR_TYPE_GYROSCOPE)
+  {
+    // val = "Gyro:";
     x = event->gyro.x;
     y = event->gyro.y;
     z = event->gyro.z;
   }
-  else if (event->type == SENSOR_TYPE_ROTATION_VECTOR) {
-    //val = "Rot:";
+  else if (event->type == SENSOR_TYPE_ROTATION_VECTOR)
+  {
+    // val = "Rot:";
     x = event->gyro.x;
     y = event->gyro.y;
     z = event->gyro.z;
   }
-  else if (event->type == SENSOR_TYPE_LINEAR_ACCELERATION) {
-    //val = "Linear:";
+  else if (event->type == SENSOR_TYPE_LINEAR_ACCELERATION)
+  {
+    // val = "Linear:";
     x = event->acceleration.x;
     y = event->acceleration.y;
     z = event->acceleration.z;
     acc_vert = y;
   }
-  else if (event->type == SENSOR_TYPE_GRAVITY) {
-    //val = "Gravity:";
+  else if (event->type == SENSOR_TYPE_GRAVITY)
+  {
+    // val = "Gravity:";
     x = event->acceleration.x;
     y = event->acceleration.y;
     z = event->acceleration.z;
   }
-  else {
-    //Serial.print("Unk:");
+  else
+  {
+    // Serial.print("Unk:");
   }
 
-  return String(x)+ ", " + String(y) + ", " + String(z);
+  return String(x) + ", " + String(y) + ", " + String(z);
 }
 
-void config_acc(int addr) {
+void config_acc(int addr)
+{
 
-    //G range
-    Wire.beginTransmission(0x28);
-    Wire.write(0x08);
-    Wire.write(0b00001111);
-    Wire.endTransmission();
+  // G range
+  Wire.beginTransmission(0x28);
+  Wire.write(0x08);
+  Wire.write(0b00001111);
+  Wire.endTransmission();
 }
 
-void read_altimeter() {
+void read_altimeter()
+{
   altitude = myPressure.readAltitudeFt() - altitude_0;
 }
 
- void filter_accel(sensors_event_t* event) {
-    x = event->acceleration.x;
-    y = event->acceleration.y;
-    z = event->acceleration.z;
-    accel = float(sqrt(x*x + y*y + z*z));
-    accel_filtered = accel*(1-accel_k) + accel_filtered*accel_k; 
- }
+void filter_accel(sensors_event_t *event)
+{
+  x = event->acceleration.x;
+  y = event->acceleration.y;
+  z = event->acceleration.z;
+  accel = float(sqrt(x * x + y * y + z * z));
+  accel_filtered = accel * (1 - accel_k) + accel_filtered * accel_k;
+}
 
-
-void filter_altimeter() {
+void filter_altimeter()
+{
   prev_alt = altimeter_filtered;
   altimeter_filtered = altimeter_k * altimeter_filtered + (1 - altimeter_k) * altitude;
 }
 
- void filter_velocity() {
-    vel = (altimeter_filtered - prev_alt) / loop_time * 1000;
-    vel_filtered = vel*(1-vel_k) + vel_filtered*vel_k;
- }
+void filter_velocity()
+{
+  vel = (altimeter_filtered - prev_alt) / loop_time * 1000;
+  vel_filtered = vel * (1 - vel_k) + vel_filtered * vel_k;
+}
 
- void make_prediction() {
+void make_prediction()
+{
   float v = vel_filtered * .3048;
-  prediction = v*v / ((accel_filtered + 9.81)*.3048) + altimeter_filtered;
-  prediction_filtered = prediction*(1-prediction_k) + prediction_filtered*(prediction_k);
- }
+  prediction = v * v / ((accel_filtered + 9.81) * .3048) + altimeter_filtered;
+  prediction_filtered = prediction * (1 - prediction_k) + prediction_filtered * (prediction_k);
+}
 
- void velocity_fusion() {
-  imu_vel = fusion_vel - ((acc_vert<0) ? 1: -1)*3.2808*accel_filtered*loop_time/1000.0;
-  if (acc_vert < 20) {
-    fusion_vel = imu_vel*fusion_k + (1-fusion_k)*vel_filtered;
-  } else {
+void velocity_fusion()
+{
+  imu_vel = fusion_vel - ((acc_vert < 0) ? 1 : -1) * 3.2808 * accel_filtered * loop_time / 1000.0;
+  if (acc_vert < 20)
+  {
+    fusion_vel = imu_vel * fusion_k + (1 - fusion_k) * vel_filtered;
+  }
+  else
+  {
     fusion_vel = vel_filtered;
   }
-  
- }
+}
 
-
-//Takes a val between 0 and 1. 0 is full retraction, 1 is full extension
-void set_ATS(float val) {
+// Takes a val between 0 and 1. 0 is full retraction, 1 is full extension
+void set_ATS(float val)
+{
   float pos = (ATS_max - ATS_min) * val + ATS_min;
   ATS.write(int(pos));
 }
