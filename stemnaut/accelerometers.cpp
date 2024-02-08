@@ -176,7 +176,7 @@ bool cmrc_record_sample() {
 
     bool success = qspi_write(sample, CMRC_SAMPLE_SIZE);
     if (!success) {
-        Serial.println("Error writing sample to QPSI flash (qspi_write returned false).");
+        Serial.println("Error writing sample to SD");
     }
     return success;
 }
@@ -206,7 +206,7 @@ bool cmrc_read_qspi_sample(cmrc_sample_t *out) {
     uint8_t sample[CMRC_SAMPLE_SIZE];
 
     if (!qspi_read(sample, CMRC_SAMPLE_SIZE)) {
-        Serial.println("Error reading sample from QPSI flash (qspi_read returned false).");
+        Serial.println("Error reading sample from SD Card");
         return false;
     }
 
