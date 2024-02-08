@@ -22,34 +22,50 @@ static bool normal_operation() {
  */
 static void enter_read_mode() {
     Serial.println("Entering alternate read mode (outputting logged data).");
-    qspi_init_flash(true);
+    // re-open the file for reading:
+    myFile = SD.open("stemnaut.txt");
+    if (myFile) {
+      Serial.println("stemnaut.txt:");
 
-    uint32_t data_length = qspi_data_length();
-    uint32_t num_samples_remaining = data_length / CMRC_SAMPLE_SIZE;
-
-    Serial.print("# Num samples: ");
-    Serial.println(num_samples_remaining);
-
-    while (num_samples_remaining > 0) {
-        cmrc_sample_t sample;
-        if (!cmrc_read_qspi_sample(&sample)) { 
-            Serial.println("Error reading sample (cmrc_read_qspi_sample returned false.)");
-            delay(100);
-            exit(0);
-        } 
-
-        char output[256];
-        snprintf(output, 256, "%lu, "
-                "%f, %f, %f, "
-                "%f, %f, %f, "
-                "%d, %d, %d\n", 
-            sample.timestamp, 
-            sample.xAccelerationLowG, sample.yAccelerationLowG, sample.zAccelerationLowG,
-            sample.xGyroLowG, sample.yGyroLowG, sample.zGyroLowG, 
-            sample.xAccelerationHighG, sample.yAccelerationHighG, sample.zAccelerationHighG);
-        Serial.write(output);
-        num_samples_remaining -= 1;
+      // read from the file until there's nothing else in it:
+      while (myFile.available()) {
+        Serial.write(myFile.read());
+      }
+      // close the file:
+      myFile.close();
+    } else {
+      // if the file didn't open, print an error:
+      Serial.println("error opening stemnaut.txt");
     }
+    
+    // qspi_init_flash(true);
+
+    // uint32_t data_length = qspi_data_length();
+    // uint32_t num_samples_remaining = data_length / CMRC_SAMPLE_SIZE;
+
+    // Serial.print("# Num samples: ");
+    // Serial.println(num_samples_remaining);
+
+    // while (num_samples_remaining > 0) {
+    //     cmrc_sample_t sample;
+    //     if (!cmrc_read_qspi_sample(&sample)) { 
+    //         Serial.println("Error reading sample (cmrc_read_qspi_sample returned false.)");
+    //         delay(100);
+    //         exit(0);
+    //     } 
+
+    //     char output[256];
+    //     snprintf(output, 256, "%lu, "
+    //             "%f, %f, %f, "
+    //             "%f, %f, %f, "
+    //             "%d, %d, %d\n", 
+    //         sample.timestamp, 
+    //         sample.xAccelerationLowG, sample.yAccelerationLowG, sample.zAccelerationLowG,
+    //         sample.xGyroLowG, sample.yGyroLowG, sample.zGyroLowG, 
+    //         sample.xAccelerationHighG, sample.yAccelerationHighG, sample.zAccelerationHighG);
+    //     Serial.write(output);
+    //     num_samples_remaining -= 1;
+    // }
 
     Serial.write("\n\n\n");
     exit(0);
@@ -62,7 +78,12 @@ void setup() {
     if (!normal_operation()) enter_read_mode(); // Does not return.
     Serial.println("Entering normal operation (reading and logging acceleration).");
 
-    qspi_init_flash(false);
+    // qspi_init_flash(false);
+    if (!SD.begin(3)) {
+      Serial.println("initialization failed!");
+      while (1);
+    }
+    Serial.println("initialization done.");
     cmrc_accelerometers_begin();
 }
 
