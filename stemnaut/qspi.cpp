@@ -76,64 +76,105 @@ uint32_t qspi_data_length() {
 }
 
 bool qspi_read(uint8_t *buffer, uint32_t len) {
-    if (!read_mode) {
-        Serial.println("Error: qspi_read called in write mode.");
-        return false;
-    } else if (flash_address + len > flash_max_address) {
-        char buf[256];
-        snprintf(buf, 256, "Error: qspi_read called with length greater than remaining data (current address: 0x%x, max address: 0x%x, length requested: 0x%x).", 
-            flash_address, flash_max_address, len);
-        Serial.print(buf);
-        return false;
-    }
+    if (!read_mode) return false; // wrong mode. todo: log
 
-    uint32_t num_read = flash.readBuffer(flash_address, buffer, len);
-    if (num_read == 0) {
-        Serial.println("Error reading from QSPI flash (flash.readBuffer() returned 0).");
-        return false;
+    myFile = SD.open("stemnaut.txt");
+      if (myFile) {
+      Serial.println("stemnaut.txt:");
+
+      // read from the file until there's nothing else in it:
+      while (myFile.available()) {
+        Serial.write(myFile.read());
+      }
+      // close the file:
+      myFile.close();
+      return true;
     } else {
-        // From reading the source code, read always returns either 0 or len. So we can assume num_read == len.
-        flash_address += len;
-        return true;
+      // if the file didn't open, print an error:
+      Serial.println("error opening stemnaut.txt");
+      return false;
     }
+    // if (!read_mode) {
+    //     Serial.println("Error: qspi_read called in write mode.");
+    //     return false;
+    // } else if (flash_address + len > flash_max_address) {
+    //     char buf[256];
+    //     snprintf(buf, 256, "Error: qspi_read called with length greater than remaining data (current address: 0x%x, max address: 0x%x, length requested: 0x%x).", 
+    //         flash_address, flash_max_address, len);
+    //     Serial.print(buf);
+    //     return false;
+    // }
+
+    // uint32_t num_read = flash.readBuffer(flash_address, buffer, len);
+    // if (num_read == 0) {
+    //     Serial.println("Error reading from QSPI flash (flash.readBuffer() returned 0).");
+    //     return false;
+    // } else {
+    //     // From reading the source code, read always returns either 0 or len. So we can assume num_read == len.
+    //     flash_address += len;
+    //     return true;
+    // }
 }
 
 bool qspi_write(uint8_t *buffer, uint32_t len) {
-    if (read_mode) {
-        Serial.println("Error: qspi_write called in read mode.");
-        return false;
-    } else if (flash_address + len > QSPI_FLASH_SIZE) {
-        char buf[256];
-        snprintf(buf, 256, "Error: qspi_write called with length greater than remaining data (current address: 0x%x, flash size: 0x%x, length requested: 0x%x).", 
-            flash_address, QSPI_FLASH_SIZE, len);
-        Serial.print(buf);
-        return false;
-    }
+  if (read_mode) return false; // wrong mode. todo: log
+
+  Serial.begin(9600); // right number?
+  while (!Serial) {
+    ; // wait for serial port to connect. Needed for native USB port only
+  }
+
+  // open the file. note that only one file can be open at a time,
+  // so you have to close this one before opening another.
+  myFile = SD.open("stemnaut.txt", FILE_WRITE);
+
+  // if the file opened okay, write to it:
+  if (myFile) {
+    myFile.println(buffer); //is this allowed
+    // close the file:
+    myFile.close();
+    return true;
+  } else {
+    // if the file didn't open, print an error:
+    Serial.println("error opening stemnaut.txt");
+    return false;
+  }
+  
+    // if (read_mode) {
+    //     Serial.println("Error: qspi_write called in read mode.");
+    //     return false;
+    // } else if (flash_address + len > QSPI_FLASH_SIZE) {
+    //     char buf[256];
+    //     snprintf(buf, 256, "Error: qspi_write called with length greater than remaining data (current address: 0x%x, flash size: 0x%x, length requested: 0x%x).", 
+    //         flash_address, QSPI_FLASH_SIZE, len);
+    //     Serial.print(buf);
+    //     return false;
+    // }
     
-    uint32_t num_written = flash.writeBuffer(flash_address, buffer, len);
-    flash_address += num_written;
+    // uint32_t num_written = flash.writeBuffer(flash_address, buffer, len);
+    // flash_address += num_written;
 
-    if (num_written != len) {
-        char buf[256];
-        snprintf(buf, 256, "Error writing to QSPI flash (flash.writeBuffer() returned 0x%x, 0x%x expected).", num_written, len);
-        Serial.println(buf);
-        return false;
-    } else {
-        // Update max address in first 4 bytes. Address is stored as little-endian.
-        uint8_t address_bytes[4];
-        address_bytes[0] = flash_address & 0xFF;
-        address_bytes[1] = (flash_address >> 8) & 0xFF;
-        address_bytes[2] = (flash_address >> 16) & 0xFF;
-        address_bytes[3] = (flash_address >> 24) & 0xFF;
+    // if (num_written != len) {
+    //     char buf[256];
+    //     snprintf(buf, 256, "Error writing to QSPI flash (flash.writeBuffer() returned 0x%x, 0x%x expected).", num_written, len);
+    //     Serial.println(buf);
+    //     return false;
+    // } else {
+    //     // Update max address in first 4 bytes. Address is stored as little-endian.
+    //     uint8_t address_bytes[4];
+    //     address_bytes[0] = flash_address & 0xFF;
+    //     address_bytes[1] = (flash_address >> 8) & 0xFF;
+    //     address_bytes[2] = (flash_address >> 16) & 0xFF;
+    //     address_bytes[3] = (flash_address >> 24) & 0xFF;
 
-        uint32_t num_written_address = flash.writeBuffer(0, address_bytes, 4);
-        if (num_written_address != 4) {
-            char buf[256];
-            snprintf(buf, 256, "Error writing new max address (flash.writeBuffer() returned %d, 4 expected).", num_written_address);
-            Serial.println(buf);
-            return false;
-        }
+    //     uint32_t num_written_address = flash.writeBuffer(0, address_bytes, 4);
+    //     if (num_written_address != 4) {
+    //         char buf[256];
+    //         snprintf(buf, 256, "Error writing new max address (flash.writeBuffer() returned %d, 4 expected).", num_written_address);
+    //         Serial.println(buf);
+    //         return false;
+    //     }
 
-        return true;
-    }
+    //     return true;
+    // }
 }
