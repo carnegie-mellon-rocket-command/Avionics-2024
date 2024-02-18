@@ -29,19 +29,20 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <Servo.h>
-#include "SparkFunMPL3115A2.h"
-#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP085.h>
 #include <Adafruit_BNO055.h>
-#include <utility/imumaths.h>
+#include <Adafruit_Sensor.h>
+// #include <utility/imumaths.h>
 
 // Create an instance of the object
-MPL3115A2 myPressure;
+// MPL3115A2 myPressure;
 
 uint16_t BNO055_SAMPLERATE_DELAY_MS = 100;
 
 // Check I2C device address and correct line below (by default address is 0x29 or 0x28)
 //                                   id, address
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
+Adafruit_BMP085 bmp;
 
 // On the Ethernet Shield, CS is pin 4. Note that even if it's not
 // used as the CS pin, the hardware CS pin (10 on most Arduino boards,
@@ -59,7 +60,7 @@ Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
 // Teensy++ 2.0: pin 20
 //===============================================================================================================================
 
-const int chipSelect = BUILTIN_SDCARD;
+const int chipSelect = BUILTIN_SDCARD; 
 sensors_event_t angVelocityData, linearAccelData, magnetometerData, accelerometerData, gravityData;
 
 long start_time, temp_time, curr_time, timer;
@@ -100,7 +101,7 @@ float fusion_k = .985;
 
 bool SD_active = true;
 
-float accel_thresh = 10;
+float accel_thresh = 5;
 
 bool launched = false;
 
@@ -109,6 +110,9 @@ int ATS_pin = 6;
 int ATS_min = 75;
 int ATS_max = 15;
 float ATS_pos = 0;
+float meter_to_foot = 3.2808399;
+
+float kalmanOut;
 //================================================================================================================================
 // this part sets things up!
 
@@ -116,12 +120,12 @@ float ATS_pos = 0;
  * Kalman filtering attempt - Jeffery
  */
 // parameters
-float processNoise = 0.001;  // Process noise covariance 
-float measurementNoise = 0.1;  // Measurement noise covariance 
+float processNoise = 0.025;  // Process noise covariance 
+float measurementNoise = 0.5;  // Measurement noise covariance 
 
 // state variables
 float altitudeEstimate = 0.0;  // Current altitude estimate
-float altitudeErrorEstimate = 1.0;  // Error estimate for altitude
+float altitudeErrorEstimate = 3.0;  // Error estimate for altitude
 
 // Kalman filter update step
 void updateKalmanFilter(float measurement) {
@@ -154,16 +158,23 @@ void setup()
   Serial.println("card initialized.");
 
   Wire.begin();
-  myPressure.begin(); // Get sensor online
+  // myPressure.begin(); // Get sensor online
 
   // Configure the sensor
-  myPressure.setModeAltimeter(); // Measure altitude above sea level in meters
+  // myPressure.setModeAltimeter(); // Measure altitude above sea level in meters
   // myPressure.setModeBarometer(); // Measure pressure in Pascals from 20 to 110 kPa
 
-  myPressure.setOversampleRate(1); // Set Oversample to the recommended 128
-  myPressure.enableEventFlags();   // Enable all three pressure and temp event flags
+  // myPressure.setOversampleRate(1); // Set Oversample to the recommended 128
+  // myPressure.enableEventFlags();   // Enable all three pressure and temp event flags
 
-  altitude_0 = myPressure.readAltitudeFt();
+  if (!bmp.begin()) {
+    Serial.print("BMP sensor is bad");
+    while (1)
+      ;
+  }
+
+  // altitude_0 = myPressure.readAltitudeFt();
+  altitude_0 = bmp.readAltitude() * meter_to_foot;
 
   if (!bno.begin())
   {
@@ -173,8 +184,10 @@ void setup()
   }
 
   ATS.attach(ATS_pin);
-  set_ATS(ATS_pos);
-  delay(500);
+  set_ATS(1);
+  delay(2000);
+  set_ATS(0);
+  delay(2000);
   ATS.detach();
   pinMode(LED, OUTPUT);
   start_time = millis();
@@ -210,7 +223,8 @@ void loop()
     String s6 = printEvent(&angVelocityData);
     String s7 = printEvent(&magnetometerData);
     s = s1 + String(", ") + s2 + String(", ") + s3 + String(", ") + s4 + String(", ") + s5 + String(", ") + s6 + String(", ") + s7;
-    Serial.println(fusion_vel);
+    // Serial.println(fusion_vel);
+    // Serial.println("\nAltitude flat reading: " + String(altitude));
 
     // Serial.println(s);
     if (i != buf_size - 1)
@@ -222,11 +236,17 @@ void loop()
     {
       launched = true;
       ATS.attach(ATS_pin);
+      digitalWrite(LED, HIGH);
     }
 
     if (launched)
     {
-      set_ATS(1);
+      if (prediction_filtered > 5000 && ATS_pos <= 1.0) {
+        ATS_pos += 0.01;
+      } else if (prediction_filtered < 5000 ** ATS_pos >= 0.0) {
+        ATS_pos -= 0.01;
+      }
+      set_ATS(ATS_pos);
     }
 
     /*
@@ -238,15 +258,14 @@ void loop()
 
     // Get filtered altitude
     float kalmanFilteredAltitude = getAltitudeEstimate();
-    Serial.print("Altitude (Kalman Filter): " + String(kalmanFilteredAltitude));
+    kalmanOut = kalmanFilteredAltitude;
+    // Serial.print("Altitude (Kalman Filter): " + String(kalmanFilteredAltitude));
   }
 
   if (launched)
   {
-    digitalWrite(LED, LOW);
     WriteData(buf);
     // Serial.println(buf);
-    digitalWrite(LED, HIGH);
     // set_ATS(1);
   }
 }
@@ -379,7 +398,7 @@ void config_acc(int addr)
 
 void read_altimeter()
 {
-  altitude = myPressure.readAltitudeFt() - altitude_0;
+  altitude = bmp.readAltitude() * meter_to_foot - altitude_0;
 }
 
 void filter_accel(sensors_event_t *event)
@@ -394,7 +413,7 @@ void filter_accel(sensors_event_t *event)
 void filter_altimeter()
 {
   prev_alt = altimeter_filtered;
-  altimeter_filtered = altimeter_k * altimeter_filtered + (1 - altimeter_k) * altitude;
+  altimeter_filtered = kalmanOut;
 }
 
 void filter_velocity()
