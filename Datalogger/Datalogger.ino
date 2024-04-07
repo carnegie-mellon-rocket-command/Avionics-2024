@@ -29,7 +29,7 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <Servo.h>
-#include <Adafruit_BMP085.h>
+#include <Adafruit_BMP3XX.h>
 #include <Adafruit_BNO055.h>
 #include <Adafruit_Sensor.h>
 // #include <utility/imumaths.h>
@@ -42,7 +42,7 @@ uint16_t BNO055_SAMPLERATE_DELAY_MS = 100;
 // Check I2C device address and correct line below (by default address is 0x29 or 0x28)
 //                                   id, address
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
-Adafruit_BMP085 bmp;
+Adafruit_BMP3XX bmp;
 
 // On the Ethernet Shield, CS is pin 4. Note that even if it's not
 // used as the CS pin, the hardware CS pin (10 on most Arduino boards,
@@ -101,16 +101,21 @@ float fusion_k = .985;
 
 bool SD_active = true;
 
-float accel_thresh = 5;
+float accel_thresh = 10;
 
 bool launched = false;
 
 Servo ATS;
 int ATS_pin = 6;
-int ATS_min = 75;
-int ATS_max = 15;
+int ATS_min = 0;
+int ATS_max = 78;
+int alt_target = 5000;
 float ATS_pos = 0;
 float meter_to_foot = 3.2808399;
+unsigned long launchT = 0;
+unsigned long changeT = 0;
+bool thing = false;
+bool attached = false;
 
 float kalmanOut;
 //================================================================================================================================
@@ -167,14 +172,14 @@ void setup()
   // myPressure.setOversampleRate(1); // Set Oversample to the recommended 128
   // myPressure.enableEventFlags();   // Enable all three pressure and temp event flags
 
-  if (!bmp.begin()) {
+  if (!bmp.begin_I2C()) {
     Serial.print("BMP sensor is bad");
     while (1)
       ;
   }
 
   // altitude_0 = myPressure.readAltitudeFt();
-  altitude_0 = bmp.readAltitude() * meter_to_foot;
+  altitude_0 = bmp.readAltitude(1015.5) * meter_to_foot;
 
   if (!bno.begin())
   {
@@ -222,7 +227,7 @@ void loop()
     String s5 = printEvent(&gravityData);
     String s6 = printEvent(&angVelocityData);
     String s7 = printEvent(&magnetometerData);
-    s = s1 + String(", ") + s2 + String(", ") + s3 + String(", ") + s4 + String(", ") + s5 + String(", ") + s6 + String(", ") + s7;
+    s = s1 + String(", ") + s2 + String(", ") + s3 + String(", ") + s4 + String(", ") + s5 + String(", ") + s6 + String(", ") + s7 + String(", ") + String(ATS_pos);
     // Serial.println(fusion_vel);
     // Serial.println("\nAltitude flat reading: " + String(altitude));
 
@@ -235,18 +240,36 @@ void loop()
     if (accel_filtered > accel_thresh && launched == false)
     {
       launched = true;
-      ATS.attach(ATS_pin);
       digitalWrite(LED, HIGH);
+      launchT = millis();
     }
-
+    if (!attached && millis() - launchT > 4500) {
+      ATS.attach(ATS_pin);
+      set_ATS(0.0);
+      attached = true;
+    }
     if (launched)
     {
-      if (prediction_filtered > 5000 && ATS_pos <= 1.0) {
-        ATS_pos += 0.01;
-      } else if (prediction_filtered < 5000 ** ATS_pos >= 0.0) {
-        ATS_pos -= 0.01;
+
+      if (prediction_filtered > alt_target && ATS_pos < 1.0 && (millis() - launchT) > 4500) {
+        ATS_pos += 0.1;
+      } else if (prediction_filtered < alt_target && ATS_pos > 0.0 && (millis() - launchT) > 4500) {
+        ATS_pos -= 0.1;
       }
-      set_ATS(ATS_pos);
+      if ((millis() - launchT) > 18000) {
+        set_ATS(0.0);
+      } else if ((millis() - launchT) > 4500 && millis() - changeT > 1000) {
+        Serial.println(millis() - launchT);
+        Serial.println(millis() - changeT);
+        if (thing) {
+          thing = false;
+          set_ATS(1.0);
+        } else {
+          thing = true;
+          set_ATS(0.0);
+        }
+        changeT = millis();
+      }
     }
 
     /*
@@ -398,7 +421,7 @@ void config_acc(int addr)
 
 void read_altimeter()
 {
-  altitude = bmp.readAltitude() * meter_to_foot - altitude_0;
+  altitude = bmp.readAltitude(1015.5) * meter_to_foot - altitude_0;
 }
 
 void filter_accel(sensors_event_t *event)
@@ -419,14 +442,22 @@ void filter_altimeter()
 void filter_velocity()
 {
   vel = (altimeter_filtered - prev_alt) / loop_time * 1000;
-  vel_filtered = vel * (1 - vel_k) + vel_filtered * vel_k;
+  // vel_filtered = vel * (1 - vel_k) + vel_filtered * vel_k;
+  vel_filtered = vel;
+}
+
+void calc_term_velocity()
+{
+  // This needs to be implemented
+  vel_term = sqrt(2*)
 }
 
 void make_prediction()
 {
-  float v = vel_filtered * .3048;
-  prediction = v * v / ((accel_filtered + 9.81) * .3048) + altimeter_filtered;
-  prediction_filtered = prediction * (1 - prediction_k) + prediction_filtered * (prediction_k);
+  float v = vel_filtered;
+  // prediction = v * v / ((accel_filtered + 9.81) * .3048) + altimeter_filtered;
+  // prediction_filtered = prediction * (1 - prediction_k) + prediction_filtered * (prediction_k);
+  prediction = 
 }
 
 void velocity_fusion()
