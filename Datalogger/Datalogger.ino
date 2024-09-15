@@ -77,7 +77,7 @@ String s;
 
 float altitude, altitude_0;
 
-float altimeter_k = .9;
+float altimeter_k = 0.8;
 float altimeter_filtered = 0;
 float prev_alt;
 
@@ -113,7 +113,6 @@ int alt_target = 5000;
 float ATS_pos = 0;
 float meter_to_foot = 3.2808399;
 unsigned long launchT = 0;
-unsigned long changeT = 0;
 bool thing = false;
 bool attached = false;
 
@@ -228,6 +227,7 @@ void loop()
     String s6 = printEvent(&angVelocityData);
     String s7 = printEvent(&magnetometerData);
     s = s1 + String(", ") + s2 + String(", ") + s3 + String(", ") + s4 + String(", ") + s5 + String(", ") + s6 + String(", ") + s7 + String(", ") + String(ATS_pos);
+    // Serial.println(s);
     // Serial.println(fusion_vel);
     // Serial.println("\nAltitude flat reading: " + String(altitude));
 
@@ -258,17 +258,8 @@ void loop()
       }
       if ((millis() - launchT) > 18000) {
         set_ATS(0.0);
-      } else if ((millis() - launchT) > 4500 && millis() - changeT > 1000) {
-        Serial.println(millis() - launchT);
-        Serial.println(millis() - changeT);
-        if (thing) {
-          thing = false;
-          set_ATS(1.0);
-        } else {
-          thing = true;
-          set_ATS(0.0);
-        }
-        changeT = millis();
+      } else if ((millis() - launchT) > 4500) {
+        set_ATS(ATS_pos);
       }
     }
 
@@ -277,11 +268,11 @@ void loop()
      * main_sim_4 MATLAB version: obj.vert_vel(end+1) = (obj.alt_reading(end)-obj.alt_reading(end-1))/(obj.time_step)*(1-obj.vel_smoothing)+obj.vert_vel(end)*obj.vel_smoothing;
     */
     // Update Kalman filter with altitude measurement
-    updateKalmanFilter(accel_filtered);
+    // updateKalmanFilter(accel_filtered);
 
     // Get filtered altitude
-    float kalmanFilteredAltitude = getAltitudeEstimate();
-    kalmanOut = kalmanFilteredAltitude;
+    // float kalmanFilteredAltitude = getAltitudeEstimate();
+    // kalmanOut = kalmanFilteredAltitude;
     // Serial.print("Altitude (Kalman Filter): " + String(kalmanFilteredAltitude));
   }
 
@@ -436,28 +427,21 @@ void filter_accel(sensors_event_t *event)
 void filter_altimeter()
 {
   prev_alt = altimeter_filtered;
-  altimeter_filtered = kalmanOut;
+  altimeter_filtered = altimeter_k * prev_alt + (1 - altimeter_k) * altitude;
 }
 
 void filter_velocity()
 {
   vel = (altimeter_filtered - prev_alt) / loop_time * 1000;
-  // vel_filtered = vel * (1 - vel_k) + vel_filtered * vel_k;
-  vel_filtered = vel;
-}
-
-void calc_term_velocity()
-{
-  // This needs to be implemented
-  vel_term = sqrt(2*)
+  vel_filtered = vel * (1 - vel_k) + vel_filtered * vel_k;
+  // vel_filtered = vel;
 }
 
 void make_prediction()
 {
-  float v = vel_filtered;
-  // prediction = v * v / ((accel_filtered + 9.81) * .3048) + altimeter_filtered;
-  // prediction_filtered = prediction * (1 - prediction_k) + prediction_filtered * (prediction_k);
-  prediction = 
+  float v = vel_filtered * 0.3048;
+  prediction = v * v / ((accel_filtered + 9.81) * .3048) + altimeter_filtered;
+  prediction_filtered = prediction * (1 - prediction_k) + prediction_filtered * (prediction_k);
 }
 
 void velocity_fusion()
