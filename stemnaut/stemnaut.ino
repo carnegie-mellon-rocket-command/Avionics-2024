@@ -1,7 +1,13 @@
 #include "accelerometers.h"
-#include "qspi.h"
+#include <SD.h>
+#include <SPI.h>
 
 #define MODE_PIN 0 // Short this pin to ground on startup to enter alternate (read) mode.
+
+// global variables
+File myFile;
+String buf = "";
+int buf_size = 500;
 
 /**
  * @brief Gets whether the STEMnaut should enter normal operation, or enter 'read mode'
@@ -23,7 +29,12 @@ static bool normal_operation() {
 static void enter_read_mode() {
     Serial.println("Entering alternate read mode (outputting logged data).");
     // re-open the file for reading:
-    myFile = SD.open("stemnaut.txt");
+    if (!SD.begin(3)) {
+      Serial.println("initialization failed!");
+      while (1);
+    }
+    Serial.println("Initialization epic! - SD time");
+    myFile = SD.open("stemnaut.txt", FILE_READ);
     if (myFile) {
       Serial.println("stemnaut.txt:");
 
@@ -73,21 +84,49 @@ static void enter_read_mode() {
 
 void setup() {
     Serial.begin(115200);
-    while (!Serial) delay(100); 
+    // while (!Serial) delay(100); 
 
     if (!normal_operation()) enter_read_mode(); // Does not return.
     Serial.println("Entering normal operation (reading and logging acceleration).");
 
-    // qspi_init_flash(false);
+    pinMode(3, OUTPUT);
+    pinMode(LED_BUILTIN, OUTPUT);
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(1000);
+
     if (!SD.begin(3)) {
       Serial.println("initialization failed!");
       while (1);
     }
+    digitalWrite(LED_BUILTIN, HIGH);
+    Serial.println("Initialization epic - (FOR SD)!");
+    // qspi_init_flash(false);
+    myFile = SD.open("stemnaut.txt", FILE_WRITE);
+    if (myFile) {
+      Serial.println("stemnaut.txt:");
+    } else {
+      Serial.println("SD card opening not work");
+      while(1);
+    }
     Serial.println("initialization done.");
-    cmrc_accelerometers_begin();
+    myFile.println("============[FIXED]=============");
+    digitalWrite(LED_BUILTIN, LOW);
+    bool accel_test = cmrc_accelerometers_begin();
+    Serial.println(String(accel_test));
+    myFile.close();
 }
 
 void loop() {
-    cmrc_record_sample();
-    delay(1000 / CMRC_SAMPLE_RATE);
+  for (int i = 0; i < buf_size; i++) {
+    String s = cmrc_record_sample();
+    if (i != buf_size - 1)
+      s = s + "\n";
+    buf += s;
+  }
+  myFile = SD.open("stemnaut.txt", FILE_WRITE);
+  if (myFile) {
+    myFile.println(buf);
+    myFile.close();
+  }
+  buf = "";
 }
